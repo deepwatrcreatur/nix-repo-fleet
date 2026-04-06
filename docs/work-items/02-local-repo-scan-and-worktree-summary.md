@@ -1,6 +1,6 @@
 # 02 Local Repo Scan And Worktree Summary
 
-Status: ready
+Status: in-progress
 
 ## Goal
 
@@ -17,3 +17,9 @@ Scan a directory of repos and summarize local git state with enough detail to su
 
 - do not assume all directories are git repos
 - prefer fast local commands and bounded output
+
+## Progress
+
+- `repo-fleet repos --root <path>` implemented in `src/repo_fleet_cli.py`
+- current output includes branch, dirty count, upstream drift, worktrees, and classification
+- temporary standalone clones under `/tmp` are classified separately from registered worktrees

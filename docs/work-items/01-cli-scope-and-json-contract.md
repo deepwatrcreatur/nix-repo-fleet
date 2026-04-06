@@ -1,6 +1,6 @@
 # 01 CLI Scope And JSON Contract
 
-Status: in-progress
+Status: done
 
 ## Goal
 
@@ -24,3 +24,7 @@ Define the first stable command surface and output schema for the tool.
 - implementation language chosen: Python
 - initial CLI shape defined in `docs/cli-contract.md`
 - placeholder executable scaffolded in `src/repo_fleet_cli.py`
+
+## Outcome
+
+The initial command surface and JSON contract are established and can now support concrete subcommand implementations.
