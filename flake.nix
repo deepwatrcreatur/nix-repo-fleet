@@ -15,6 +15,23 @@
     {
       formatter = forAllSystems ({ pkgs }: pkgs.nixfmt-rfc-style);
 
+      packages = forAllSystems ({ pkgs }: {
+        default = pkgs.writeShellApplication {
+          name = "repo-fleet";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''
+            exec ${pkgs.python3}/bin/python ${./src/repo_fleet_cli.py} "$@"
+          '';
+        };
+      });
+
+      apps = forAllSystems ({ pkgs }: {
+        default = {
+          type = "app";
+          program = "${self.packages.${pkgs.system}.default}/bin/repo-fleet";
+        };
+      });
+
       devShells = forAllSystems ({ pkgs }: {
         default = pkgs.mkShell {
           packages = with pkgs; [

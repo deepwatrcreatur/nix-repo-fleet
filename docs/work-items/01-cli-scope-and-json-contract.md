@@ -1,6 +1,6 @@
 # 01 CLI Scope And JSON Contract
 
-Status: ready
+Status: in-progress
 
 ## Goal
 
@@ -18,3 +18,9 @@ Define the first stable command surface and output schema for the tool.
 - optimize for agent consumption first
 - avoid premature TUI work
 - keep the schema versioned from the start
+
+## Progress
+
+- implementation language chosen: Python
+- initial CLI shape defined in `docs/cli-contract.md`
+- placeholder executable scaffolded in `src/repo_fleet_cli.py`
