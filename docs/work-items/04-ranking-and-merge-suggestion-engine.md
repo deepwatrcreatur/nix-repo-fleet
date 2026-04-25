@@ -1,6 +1,6 @@
 # 04 Ranking And Merge Suggestion Engine
 
-Status: ready
+Status: done
 
 ## Goal
 

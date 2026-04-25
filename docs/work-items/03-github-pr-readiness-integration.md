@@ -1,6 +1,6 @@
 # 03 GitHub PR Readiness Integration
 
-Status: ready
+Status: in-progress
 
 ## Goal
 
@@ -16,3 +16,9 @@ Pull PR readiness data from GitHub and normalize it for ranking and merge sugges
 
 - prefer `gh` command integration first
 - design the adapter so direct API usage can be swapped in later
+
+## Progress
+
+- `repo-fleet prs` now supports `--owner` or `--repo`
+- current implementation uses `gh search prs` plus `gh pr view` normalization
+- PRs are categorized into `ready_or_needs_human_review`, `waiting_on_checks`, `blocked_checks`, `blocked_conflicts`, `blocked_reviews`, or `unknown`

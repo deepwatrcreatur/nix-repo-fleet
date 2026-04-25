@@ -19,6 +19,15 @@ def run_git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str
     )
 
 
+def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def find_repos(root: Path) -> list[Path]:
     repos: list[Path] = []
     for current_root, dirnames, filenames in os.walk(root):
@@ -182,14 +191,284 @@ def repos_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def placeholder_command(subcommand: str) -> int:
+def summarize_checks(status_check_rollup: list[dict]) -> dict:
+    summary = {
+        "total": len(status_check_rollup),
+        "success": 0,
+        "failed": 0,
+        "pending": 0,
+        "skipped": 0,
+    }
+    for item in status_check_rollup:
+        conclusion = item.get("conclusion")
+        state = item.get("state")
+        status = item.get("status")
+        if conclusion == "SUCCESS" or state == "SUCCESS":
+            summary["success"] += 1
+        elif conclusion in {"FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"} or state in {"FAILURE", "ERROR"}:
+            summary["failed"] += 1
+        elif conclusion == "SKIPPED":
+            summary["skipped"] += 1
+        elif state == "PENDING" or status in {"IN_PROGRESS", "QUEUED", "WAITING"}:
+            summary["pending"] += 1
+        else:
+            summary["pending"] += 1
+    return summary
+
+
+def categorize_pr(pr: dict) -> str:
+    checks = pr["checks_summary"]
+    if pr["mergeable"] == "CONFLICTING":
+        return "blocked_conflicts"
+    if checks["failed"] > 0:
+        return "blocked_checks"
+    if checks["pending"] > 0:
+        return "waiting_on_checks"
+    if pr["mergeable"] == "MERGEABLE" and pr["merge_state_status"] in {"CLEAN", "HAS_HOOKS", "UNKNOWN"}:
+        if pr["review_decision"] == "CHANGES_REQUESTED":
+            return "blocked_reviews"
+        if pr["review_decision"] in {"APPROVED", ""}:
+            return "ready_or_needs_human_review"
+    return "unknown"
+
+
+def gh_json(args: list[str]) -> tuple[object | None, str | None]:
+    result = run_command(args)
+    if result.returncode != 0:
+        return None, result.stderr.strip() or result.stdout.strip() or "command failed"
+    try:
+        return json.loads(result.stdout), None
+    except json.JSONDecodeError as exc:
+        return None, f"invalid JSON output: {exc}"
+
+
+def fetch_pr_details(repo: str, number: int) -> dict:
+    data, error = gh_json(
+        [
+            "gh",
+            "pr",
+            "view",
+            str(number),
+            "-R",
+            repo,
+            "--json",
+            "number,title,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup",
+        ]
+    )
+    if error is not None or not isinstance(data, dict):
+        return {
+            "repository": repo,
+            "number": number,
+            "status": "error",
+            "error": error or "unknown error",
+        }
+
+    checks_summary = summarize_checks(data.get("statusCheckRollup", []))
+    pr = {
+        "repository": repo,
+        "number": data.get("number"),
+        "title": data.get("title"),
+        "url": data.get("url"),
+        "mergeable": data.get("mergeable"),
+        "merge_state_status": data.get("mergeStateStatus"),
+        "review_decision": data.get("reviewDecision") or "",
+        "checks_summary": checks_summary,
+        "status": "ok",
+    }
+    pr["category"] = categorize_pr(pr)
+    return pr
+
+
+def search_owner_prs(owner: str, state: str, limit: int) -> tuple[list[dict], str | None]:
+    data, error = gh_json(
+        [
+            "gh",
+            "search",
+            "prs",
+            "--owner",
+            owner,
+            "--state",
+            state,
+            "--limit",
+            str(limit),
+            "--json",
+            "number,repository,title,url",
+        ]
+    )
+    if error is not None or not isinstance(data, list):
+        return [], error or "unknown error"
+
+    details: list[dict] = []
+    for item in data:
+        repo = item.get("repository", {}).get("nameWithOwner")
+        number = item.get("number")
+        if not isinstance(repo, str) or not isinstance(number, int):
+            continue
+        details.append(fetch_pr_details(repo, number))
+    return details, None
+
+
+def list_repo_prs(repo: str, state: str, limit: int) -> tuple[list[dict], str | None]:
+    data, error = gh_json(
+        [
+            "gh",
+            "pr",
+            "list",
+            "-R",
+            repo,
+            "--state",
+            state,
+            "--limit",
+            str(limit),
+            "--json",
+            "number",
+        ]
+    )
+    if error is not None or not isinstance(data, list):
+        return [], error or "unknown error"
+
+    details = []
+    for item in data:
+        number = item.get("number")
+        if not isinstance(number, int):
+            continue
+        details.append(fetch_pr_details(repo, number))
+    return details, None
+
+
+def prs_command(args: argparse.Namespace) -> int:
+    if not args.owner and not args.repo:
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "tool": "nix-repo-fleet",
+            "subcommand": "prs",
+            "status": "error",
+            "message": "Provide --owner or --repo",
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 1
+
+    if args.repo:
+        prs, error = list_repo_prs(args.repo, args.state, args.limit)
+    else:
+        prs, error = search_owner_prs(args.owner, args.state, args.limit)
+
+    status = "ok" if error is None else "partial"
     payload = {
         "schema_version": SCHEMA_VERSION,
         "tool": "nix-repo-fleet",
-        "subcommand": subcommand,
-        "status": "placeholder",
-        "message": f"{subcommand} is not implemented yet",
-        "supported_subcommands": ["repos", "prs", "rank"],
+        "subcommand": "prs",
+        "status": status,
+        "owner": args.owner,
+        "repo": args.repo,
+        "state": args.state,
+        "pr_count": len(prs),
+        "prs": prs,
+    }
+    if error is not None:
+        payload["error"] = error
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if status == "ok" else 1
+
+
+def rank_command(args: argparse.Namespace) -> int:
+    # 1. Fetch Repos
+    root = Path(args.root).expanduser().resolve()
+    repos = []
+    if root.exists():
+        found = find_repos(root)
+        summaries = [summarize_repo(repo_path) for repo_path in found]
+        repos = classify_repos(root, summaries)
+
+    # 2. Fetch PRs
+    prs = []
+    if args.owner or args.repo:
+        if args.repo:
+            prs, _ = list_repo_prs(args.repo, "open", 50)
+        else:
+            prs, _ = search_owner_prs(args.owner, "open", 50)
+
+    # 3. Generate Recommendations
+    recommendations = []
+
+    # PR Recommendations
+    for pr in prs:
+        if pr.get("status") != "ok":
+            continue
+
+        rec = {
+            "type": "pr",
+            "repository": pr["repository"],
+            "number": pr["number"],
+            "title": pr["title"],
+            "url": pr["url"],
+            "score": 0,
+            "action": "unknown",
+            "reason": "",
+        }
+
+        category = pr.get("category")
+        if category == "ready_or_needs_human_review":
+            rec["score"] = 10
+            rec["action"] = "merge"
+            rec["reason"] = "PR is clean and approved (or needs final human check)"
+        elif category == "waiting_on_checks":
+            rec["score"] = 5
+            rec["action"] = "wait"
+            rec["reason"] = "Waiting for CI checks to complete"
+        elif category == "blocked_reviews":
+            rec["score"] = 2
+            rec["action"] = "address_reviews"
+            rec["reason"] = "Changes requested by reviewers"
+        elif category == "blocked_checks":
+            rec["score"] = 1
+            rec["action"] = "fix_checks"
+            rec["reason"] = "One or more CI checks failed"
+        elif category == "blocked_conflicts":
+            rec["score"] = 0
+            rec["action"] = "rebase"
+            rec["reason"] = "PR has merge conflicts"
+
+        recommendations.append(rec)
+
+    # Repo/Worktree Recommendations
+    for repo in repos:
+        # Check for prunable worktrees
+        for worktree in repo.get("worktrees", []):
+            if worktree.get("prunable"):
+                recommendations.append({
+                    "type": "worktree_prune",
+                    "repo_path": repo["repo_path"],
+                    "repo_name": repo["repo_name"],
+                    "worktree_path": worktree["path"],
+                    "score": 9,
+                    "action": "prune_worktree",
+                    "reason": f"Worktree at {worktree['path']} is stale: {worktree['prunable']}",
+                })
+
+        if repo["classification"] == "registered_worktree":
+            if not repo["is_dirty"] and repo["current_branch"] == "main":
+                tracking = repo["tracking"]
+                if tracking["ahead"] == 0 and tracking["behind"] == 0:
+                    recommendations.append({
+                        "type": "worktree_cleanup",
+                        "repo_path": repo["repo_path"],
+                        "repo_name": repo["repo_name"],
+                        "score": 8,
+                        "action": "remove_worktree",
+                        "reason": "Worktree is on main, sync with upstream, and not dirty",
+                    })
+
+    # Sort by score descending
+    recommendations.sort(key=lambda x: x["score"], reverse=True)
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "tool": "nix-repo-fleet",
+        "subcommand": "rank",
+        "status": "ok",
+        "recommendation_count": len(recommendations),
+        "recommendations": recommendations,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -202,8 +481,16 @@ def build_parser() -> argparse.ArgumentParser:
     repos_parser = subparsers.add_parser("repos")
     repos_parser.add_argument("--root", default=".")
 
-    subparsers.add_parser("prs")
-    subparsers.add_parser("rank")
+    prs_parser = subparsers.add_parser("prs")
+    prs_parser.add_argument("--owner")
+    prs_parser.add_argument("--repo")
+    prs_parser.add_argument("--state", default="open")
+    prs_parser.add_argument("--limit", type=int, default=30)
+
+    rank_parser = subparsers.add_parser("rank")
+    rank_parser.add_argument("--root", default=".")
+    rank_parser.add_argument("--owner")
+    rank_parser.add_argument("--repo")
 
     return parser
 
@@ -216,9 +503,9 @@ def main() -> int:
     if subcommand == "repos":
         return repos_command(args)
     if subcommand == "prs":
-        return placeholder_command("prs")
+        return prs_command(args)
     if subcommand == "rank":
-        return placeholder_command("rank")
+        return rank_command(args)
 
     parser.print_help()
     return 1
