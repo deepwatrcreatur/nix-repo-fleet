@@ -4,7 +4,7 @@
 
 1. `01-cli-scope-and-json-contract.md` - done
 2. `02-local-repo-scan-and-worktree-summary.md` - done
-3. `03-github-pr-readiness-integration.md` - in-progress
+3. `03-github-pr-readiness-integration.md` - done
 4. `04-ranking-and-merge-suggestion-engine.md` - done
 
 ## Rules

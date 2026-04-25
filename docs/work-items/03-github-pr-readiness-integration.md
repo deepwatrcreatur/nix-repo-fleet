@@ -1,6 +1,6 @@
 # 03 GitHub PR Readiness Integration
 
-Status: in-progress
+Status: done
 
 ## Goal
 
