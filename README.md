@@ -13,3 +13,9 @@ Nix-packaged tooling for multi-repo fleet triage, PR readiness checks, worktree 
 ## Status
 
 Early scaffold. See [docs/work-items/README.md](docs/work-items/README.md).
+
+## Current Direction
+
+- implementation language: Python
+- output contract: JSON-first
+- first executable target: `repo-fleet` placeholder CLI with `repos`, `prs`, and `rank`
